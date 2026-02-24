@@ -186,27 +186,28 @@ class ToolExecutor:
         return result
 
     # Browser tools
-    async def _tool_browser_navigate(self, url: str) -> dict:
+    async def _tool_browser_navigate(self, url: str, timeout: int = 30000) -> dict:
         """Navigate browser to URL."""
-        result = await self.browser_tools.navigate(url)
+        result = await self.browser_tools.navigate(url, timeout=timeout)
         return {
             "url": result.get("url", url),
             "title": result.get("title", ""),
             "success": result.get("success", False),
+            "error": result.get("error"),
         }
 
-    async def _tool_browser_click(self, selector: str) -> dict:
+    async def _tool_browser_click(self, selector: str, timeout: int = 5000) -> dict:
         """Click element in browser."""
-        result = await self.browser_tools.click(selector)
+        result = await self.browser_tools.click(selector, timeout=timeout)
         return {
             "selector": selector,
             "success": result.get("success", False),
             "error": result.get("error"),
         }
 
-    async def _tool_browser_type(self, selector: str, text: str) -> dict:
+    async def _tool_browser_type(self, selector: str, text: str, timeout: int = 5000) -> dict:
         """Type text into input field."""
-        result = await self.browser_tools.type_text(selector, text)
+        result = await self.browser_tools.type_text(selector, text, timeout=timeout)
         return {
             "selector": selector,
             "text": text,
@@ -222,6 +223,7 @@ class ToolExecutor:
         return {
             "success": result.get("success", False),
             "filled": result.get("filled", 0),
+            "applied": result.get("applied", []),
             "url": result.get("url", ""),
             "error": result.get("error"),
         }

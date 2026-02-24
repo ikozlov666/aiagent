@@ -117,6 +117,11 @@ TOOLS = [
                     "url": {
                         "type": "string",
                         "description": "URL to navigate to, e.g. 'http://localhost:3000' or 'https://example.com'"
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Optional timeout in milliseconds for page load.",
+                        "default": 30000
                     }
                 },
                 "required": ["url"]
@@ -134,6 +139,11 @@ TOOLS = [
                     "selector": {
                         "type": "string",
                         "description": "CSS selector (e.g. 'button.submit') or text content to click"
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Optional timeout in milliseconds for click attempts.",
+                        "default": 5000
                     }
                 },
                 "required": ["selector"]
@@ -155,6 +165,11 @@ TOOLS = [
                     "text": {
                         "type": "string",
                         "description": "Text to type into the field"
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Optional timeout in milliseconds for locating/filling the input.",
+                        "default": 5000
                     }
                 },
                 "required": ["selector", "text"]
@@ -165,7 +180,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "browser_fill_form",
-            "description": "Fill multiple inputs and optionally submit in ONE call. Faster than several browser_type + browser_click. Use after browser_get_page_structure. steps: list of {selector, value} or {selector, value/label, type: 'select'}; submit_selector: optional button to click after filling.",
+            "description": "Fill multiple fields and optionally submit in ONE call. Faster than several browser_type + browser_click. Tool auto-detects text/select/multiselect from DOM when possible. steps: list of {selector, value} for text; for selects use {selector, value} or {selector, label}, and for multiselect use {selector, values:[...] } or comma-separated value string.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -178,7 +193,8 @@ TOOLS = [
                                 "selector": {"type": "string"},
                                 "value": {"type": "string"},
                                 "label": {"type": "string"},
-                                "type": {"type": "string", "description": "Use 'select' for <select> elements"}
+                                "type": {"type": "string", "description": "Optional hint: select/dropdown/multiselect"},
+                                "values": {"type": "array", "items": {"type": "string"}, "description": "For multi-select: list of option values"}
                             },
                             "required": ["selector"]
                         }
@@ -258,7 +274,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "browser_get_page_structure",
-            "description": "Get a map of interactive elements (inputs, buttons, links) with exact selectors. Call this FIRST when testing a page so you know which selector to use for browser_type and browser_click — avoids guessing and speeds up testing.",
+            "description": "Get a map of interactive elements with exact selectors and control metadata (tag, role, control_type, is_select, is_multiselect, options_count). Call this FIRST so you can choose browser_type vs browser_select/browser_fill_form correctly.",
             "parameters": {
                 "type": "object",
                 "properties": {},
