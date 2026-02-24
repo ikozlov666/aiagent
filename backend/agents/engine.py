@@ -881,25 +881,70 @@ class AgentEngine:
                             execute_single_tool(tc, current_step + idx * 2)
                             for idx, tc in enumerate(batch)
                         ]
-                        batch_results = await asyncio.gather(*tasks)
-                        tool_results.extend(batch_results)
+                        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+                        for idx, br in enumerate(batch_results):
+                            if isinstance(br, Exception):
+                                tc = batch[idx]
+                                tn = tc.function.name if getattr(tc, "function", None) else "unknown"
+                                print(f"❌ [Agent] Tool batch item failed ({tn}): {br}")
+                                tool_results.append({
+                                    "tool_call_id": tc.id,
+                                    "tool_name": tn,
+                                    "result": {"success": False, "error": str(br), "result": None},
+                                })
+                            elif isinstance(br, dict):
+                                tool_results.append(br)
+                            else:
+                                tc = batch[idx]
+                                tn = tc.function.name if getattr(tc, "function", None) else "unknown"
+                                print(f"⚠️ [Agent] Tool batch item returned non-dict ({tn}): {type(br).__name__}")
+                                tool_results.append({
+                                    "tool_call_id": tc.id,
+                                    "tool_name": tn,
+                                    "result": {"success": False, "error": "Tool returned invalid result", "result": None},
+                                })
                         current_step += len(batch) * 2
                         i += len(batch)
                     else:
                         result = await execute_single_tool(tool_call, current_step)
-                        tool_results.append(result)
+                        if isinstance(result, dict):
+                            tool_results.append(result)
+                        else:
+                            print(f"⚠️ [Agent] Tool returned non-dict: {type(result).__name__}")
+                            tool_results.append({
+                                "tool_call_id": tool_call.id,
+                                "tool_name": tool_name,
+                                "result": {"success": False, "error": "Tool returned invalid result", "result": None},
+                            })
                         current_step += 2
                         i += 1
                 else:
                     result = await execute_single_tool(tool_call, current_step)
-                    tool_results.append(result)
+                    if isinstance(result, dict):
+                        tool_results.append(result)
+                    else:
+                        print(f"⚠️ [Agent] Tool returned non-dict: {type(result).__name__}")
+                        tool_results.append({
+                            "tool_call_id": tool_call.id,
+                            "tool_name": tool_name,
+                            "result": {"success": False, "error": "Tool returned invalid result", "result": None},
+                        })
                     current_step += 2
                     i += 1
 
             # ── Add tool messages with smart compression ──────────
             for tr in tool_results:
-                result = tr["result"]
-                t_name = tr["tool_name"]
+                if not isinstance(tr, dict):
+                    print(f"⚠️ [Agent] Skipping malformed tool result item: {type(tr).__name__}")
+                    continue
+                result = tr.get("result")
+                t_name = tr.get("tool_name", "unknown")
+                t_call_id = tr.get("tool_call_id")
+                if t_call_id is None:
+                    print(f"⚠️ [Agent] Skipping tool result without tool_call_id: {tr}")
+                    continue
+                if not isinstance(result, dict):
+                    result = {"success": False, "error": "Malformed tool result", "result": None}
 
                 # Serialize and compress using the context module
                 raw_json = json.dumps(result, ensure_ascii=False)
@@ -907,7 +952,7 @@ class AgentEngine:
 
                 self.messages.append({
                     "role": "tool",
-                    "tool_call_id": tr["tool_call_id"],
+                    "tool_call_id": t_call_id,
                     "content": compressed,
                 })
 
