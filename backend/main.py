@@ -33,6 +33,10 @@ from telegram_bot import telegram_bot
 
 PORTS_UPDATE_DEBOUNCE_SECONDS = 1.0
 STREAM_FLUSH_INTERVAL_SECONDS = 0.08
+<<<<<<< codex/plan-performance-and-automated-testing-improvements-hyftof
+HEARTBEAT_PORT_SCAN_INTERVAL_SECONDS = 24.0
+=======
+>>>>>>> main
 
 # ============================================
 # App lifecycle
@@ -665,6 +669,22 @@ async def websocket_chat(websocket: WebSocket, project_id: str):
     _last_ports_update_ts = 0.0
     _pending_ports_update: dict | None = None
     _ports_update_task: asyncio.Task | None = None
+<<<<<<< codex/plan-performance-and-automated-testing-improvements-hyftof
+    _last_heartbeat_port_scan_ts = 0.0
+
+    def _should_probe_ports_after_command(step_dict: dict) -> bool:
+        tool_args = step_dict.get("tool_args") or {}
+        command = (tool_args.get("command") or tool_args.get("cmd") or "")
+        normalized = " ".join(command.lower().split())
+        if not normalized:
+            return False
+        tokens = (
+            "npm run", "npm start", "yarn", "pnpm", "vite", "next dev", "uvicorn", "gunicorn",
+            "flask run", "python -m http.server", "serve", "http-server", "pkill", "killall", "kill ",
+        )
+        return any(token in normalized for token in tokens)
+=======
+>>>>>>> main
 
     async def _send_ports_update(ports_payload: dict, source: str):
         nonlocal _last_known_ports, _last_ports_update_ts
@@ -714,15 +734,19 @@ async def websocket_chat(websocket: WebSocket, project_id: str):
             _ports_update_task = asyncio.create_task(_flush_pending_ports_update(wait_seconds))
 
     async def _heartbeat_and_ports():
-        nonlocal _last_known_ports
+        nonlocal _last_known_ports, _last_heartbeat_port_scan_ts
         try:
             while True:
                 await asyncio.sleep(8)
                 await websocket.send_text(json.dumps({"type": "heartbeat"}))
 
-                # Check for new dev servers while agent is working
+                # Check for new dev servers while agent is working (throttled)
                 if agent_task and not agent_task.done():
                     try:
+                        now = asyncio.get_running_loop().time()
+                        if (now - _last_heartbeat_port_scan_ts) < HEARTBEAT_PORT_SCAN_INTERVAL_SECONDS:
+                            continue
+                        _last_heartbeat_port_scan_ts = now
                         ports = docker_manager.get_ports(project_id)
                         servers = await docker_manager.find_running_servers(project_id)
                         merged = {**ports, **servers}
@@ -760,7 +784,8 @@ async def websocket_chat(websocket: WebSocket, project_id: str):
 
                 # After execute_command completes, check if a dev server appeared
                 if (step_dict.get("type") == "tool_result"
-                        and step_dict.get("tool_name") == "execute_command"):
+                        and step_dict.get("tool_name") == "execute_command"
+                        and _should_probe_ports_after_command(step_dict)):
                     try:
                         ports = docker_manager.get_ports(project_id)
                         servers = await docker_manager.find_running_servers(project_id)

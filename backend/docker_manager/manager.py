@@ -180,6 +180,27 @@ class DockerManager:
 
     def _should_invalidate_running_servers_cache(self, command: str) -> bool:
         """Invalidate server cache only for commands likely to affect listening ports."""
+<<<<<<< codex/plan-performance-and-automated-testing-improvements-hyftof
+        normalized = " ".join((command or "").lower().split())
+        if not normalized:
+            return False
+
+        starts_with_tokens = (
+            "npm run", "npm start", "yarn dev", "yarn start", "pnpm dev", "pnpm start",
+            "vite", "next dev", "uvicorn", "gunicorn", "flask run", "django-admin runserver",
+            "python -m http.server", "serve", "http-server", "supervisorctl", "systemctl",
+            "pkill", "killall", "kill ",
+        )
+        if normalized.startswith(starts_with_tokens):
+            return True
+
+        # common inline cases, e.g. "cd app && npm run dev &"
+        inline_tokens = (
+            "&& npm run", "&& yarn", "&& pnpm", "&& vite", "&& uvicorn", "&& gunicorn",
+            "&& flask run", "&& python -m http.server", "&& kill ", "&& pkill", "&& killall",
+        )
+        return any(token in normalized for token in inline_tokens)
+=======
         normalized = (command or "").lower()
         keywords = [
             "npm run", "yarn", "pnpm", "vite", "next dev", "serve", "http-server",
@@ -187,6 +208,7 @@ class DockerManager:
             "pkill", "killall", "kill ", "supervisorctl", "systemctl"
         ]
         return any(token in normalized for token in keywords)
+>>>>>>> main
 
     async def find_running_servers(self, project_id: str) -> dict:
         """Find running dev servers in the container."""
