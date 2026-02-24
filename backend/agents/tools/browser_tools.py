@@ -518,7 +518,6 @@ class BrowserTools:
         # Cache browser readiness checks to avoid expensive ping+exec on every action.
         self._last_browser_check_ts = 0.0
         self._browser_check_ttl_sec = 15.0
-        self._browser_action_script_ready = False
 
     def _should_check_browser(self) -> bool:
         """Return True when it's time to re-check keepalive browser availability."""
@@ -614,19 +613,6 @@ class BrowserTools:
                 if not result["success"]:
                     retry_err = (result.get("stderr", "") or "Unknown error")[:200]
                     print(f"[Browser] action={action} retry_failed stderr={retry_err}")
-                    return {"success": False, "error": result.get("stderr", "Unknown error")}
-            elif "can't open file '/tmp/browser_action.py'" in stderr_full or "No such file or directory" in stderr_full:
-                print(f"[Browser] action={action} action script missing, forcing rewrite + retry")
-                await self._ensure_action_script(force=True)
-                result = await docker_manager.exec_command(
-                    self.project_id,
-                    command,
-                    workdir="/workspace",
-                    timeout=60,
-                )
-                if not result["success"]:
-                    retry_err = (result.get("stderr", "") or "Unknown error")[:200]
-                    print(f"[Browser] action={action} retry_failed after script rewrite stderr={retry_err}")
                     return {"success": False, "error": result.get("stderr", "Unknown error")}
             else:
                 return {"success": False, "error": result.get("stderr", "Unknown error")}
