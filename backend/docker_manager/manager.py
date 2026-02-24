@@ -178,36 +178,64 @@ class DockerManager:
         except:
             return False
 
+    def _should_invalidate_running_servers_cache(self, command: str) -> bool:
+        """Invalidate server cache only for commands likely to affect listening ports."""
+        normalized = (command or "").lower()
+        keywords = [
+            "npm run", "yarn", "pnpm", "vite", "next dev", "serve", "http-server",
+            "uvicorn", "gunicorn", "flask run", "django", "node", "python -m http.server",
+            "pkill", "killall", "kill ", "supervisorctl", "systemctl"
+        ]
+        return any(token in normalized for token in keywords)
+
     async def find_running_servers(self, project_id: str) -> dict:
         """Find running dev servers in the container."""
+        start_ts = time.perf_counter()
         now = time.time()
         cached = self._running_servers_cache.get(project_id)
         if cached and (now - cached[0]) < self._running_servers_ttl_seconds:
+            print(f"[DockerManager] find_running_servers cache hit project={project_id} age={(now - cached[0]):.2f}s")
             return dict(cached[1])
 
         container = self.get_container(project_id)
         if not container:
             return {}
 
-        # Common dev server ports
         common_ports = [3000, 5173, 8080, 5000, 8000, 4000]
         ports = self.get_ports(project_id)
         running_servers: dict[str, str | None] = {}
 
         check_ports = " ".join(str(port) for port in common_ports)
-        check_cmd = (
-            "for p in " + check_ports + "; do "
-            "if ss -ltn | awk '{print $4}' | grep -E '(^|:)'\"$p\"'$' >/dev/null; then "
-            "echo $p; fi; done"
-        )
-        result = await self.exec_command(project_id, check_cmd, timeout=5)
-        if result.get("success"):
+        probes = [
+            (
+                "ss",
+                "for p in " + check_ports + "; do "
+                "if command -v ss >/dev/null 2>&1 && ss -ltn | awk '{print $4}' | grep -E '(^|:)'\"$p\"'$' >/dev/null; then echo $p; fi; done",
+            ),
+            (
+                "netstat",
+                "for p in " + check_ports + "; do "
+                "if command -v netstat >/dev/null 2>&1 && netstat -ltn | awk '{print $4}' | grep -E '(^|:)'\"$p\"'$' >/dev/null; then echo $p; fi; done",
+            ),
+        ]
+
+        used_probe = "none"
+        for probe_name, probe_cmd in probes:
+            result = await self.exec_command(project_id, probe_cmd, timeout=5)
+            if not result.get("success"):
+                print(f"[DockerManager] probe={probe_name} project={project_id} failed stderr={result.get('stderr', '')[:200]}")
+                continue
+
+            used_probe = probe_name
             for line in (result.get("stdout") or "").splitlines():
                 port = line.strip()
                 if port:
                     running_servers[port] = ports.get(port)
+            break
 
         self._running_servers_cache[project_id] = (now, running_servers)
+        elapsed_ms = (time.perf_counter() - start_ts) * 1000
+        print(f"[DockerManager] find_running_servers project={project_id} probe={used_probe} result={running_servers} took={elapsed_ms:.1f}ms")
         return running_servers
 
     async def exec_command(
@@ -223,7 +251,9 @@ class DockerManager:
         so we offload it to a thread and enforce a real asyncio timeout.
         """
         self.touch_activity(project_id)
-        self._running_servers_cache.pop(project_id, None)
+        if self._should_invalidate_running_servers_cache(command):
+            self._running_servers_cache.pop(project_id, None)
+            print(f"[DockerManager] invalidated running_servers cache for project={project_id} command={command[:80]}")
         container = self.get_container(project_id)
         if not container:
             container = await self.create_sandbox(project_id)

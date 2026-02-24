@@ -5,6 +5,7 @@ WebSocket chat + REST API for project management.
 import json
 import uuid
 import asyncio
+import time
 from contextlib import asynccontextmanager
 from typing import Optional, List
 
@@ -127,17 +128,25 @@ class ConnectionManager:
         if not sockets:
             return
 
+        start_ts = time.perf_counter()
         results = await asyncio.gather(
             *(ws.send_text(message) for ws in sockets),
             return_exceptions=True,
         )
 
+        dead_count = 0
         for ws, result in zip(sockets, results):
             if isinstance(result, Exception):
+                dead_count += 1
                 try:
                     self.connections[project_id].remove(ws)
                 except ValueError:
                     pass
+
+        elapsed_ms = (time.perf_counter() - start_ts) * 1000
+        msg_type = data.get("type", "unknown")
+        if elapsed_ms > 100 or dead_count:
+            print(f"[WS] broadcast type={msg_type} project={project_id} clients={len(sockets)} dead={dead_count} took={elapsed_ms:.1f}ms")
 
 
 ws_manager = ConnectionManager()
@@ -654,20 +663,55 @@ async def websocket_chat(websocket: WebSocket, project_id: str):
     # Heartbeat + port watcher: keeps WS alive and auto-detects dev servers
     _last_known_ports: dict = {}
     _last_ports_update_ts = 0.0
+    _pending_ports_update: dict | None = None
+    _ports_update_task: asyncio.Task | None = None
 
-    async def _broadcast_ports_update(ports_payload: dict, force: bool = False):
+    async def _send_ports_update(ports_payload: dict, source: str):
         nonlocal _last_known_ports, _last_ports_update_ts
-        now = asyncio.get_running_loop().time()
-        if ports_payload == _last_known_ports:
-            return
-        if not force and (now - _last_ports_update_ts) < PORTS_UPDATE_DEBOUNCE_SECONDS:
-            return
         _last_known_ports = dict(ports_payload)
-        _last_ports_update_ts = now
+        _last_ports_update_ts = asyncio.get_running_loop().time()
         await ws_manager.broadcast(project_id, {
             "type": "ports_update",
             "ports": ports_payload,
         })
+        print(f"[Preview] Sent ports_update source={source} ports={ports_payload}")
+
+    async def _flush_pending_ports_update(wait_seconds: float):
+        nonlocal _ports_update_task, _pending_ports_update
+        try:
+            await asyncio.sleep(max(wait_seconds, 0.0))
+            pending = _pending_ports_update
+            _pending_ports_update = None
+            if pending is not None and pending != _last_known_ports:
+                await _send_ports_update(pending, source="debounce_flush")
+        finally:
+            _ports_update_task = None
+
+    async def _broadcast_ports_update(ports_payload: dict, force: bool = False, source: str = "unknown"):
+        nonlocal _ports_update_task, _pending_ports_update
+        now = asyncio.get_running_loop().time()
+        if ports_payload == _last_known_ports:
+            print(f"[Preview] Skip ports_update source={source}: unchanged payload")
+            return
+
+        if force:
+            _pending_ports_update = None
+            if _ports_update_task and not _ports_update_task.done():
+                _ports_update_task.cancel()
+            _ports_update_task = None
+            await _send_ports_update(ports_payload, source=source)
+            return
+
+        elapsed = now - _last_ports_update_ts
+        if elapsed >= PORTS_UPDATE_DEBOUNCE_SECONDS:
+            await _send_ports_update(ports_payload, source=source)
+            return
+
+        _pending_ports_update = dict(ports_payload)
+        print(f"[Preview] Debounce ports_update source={source} wait={PORTS_UPDATE_DEBOUNCE_SECONDS - elapsed:.2f}s")
+        if _ports_update_task is None or _ports_update_task.done():
+            wait_seconds = PORTS_UPDATE_DEBOUNCE_SECONDS - elapsed
+            _ports_update_task = asyncio.create_task(_flush_pending_ports_update(wait_seconds))
 
     async def _heartbeat_and_ports():
         nonlocal _last_known_ports
@@ -682,10 +726,9 @@ async def websocket_chat(websocket: WebSocket, project_id: str):
                         ports = docker_manager.get_ports(project_id)
                         servers = await docker_manager.find_running_servers(project_id)
                         merged = {**ports, **servers}
-                        print(f"[Preview] Live port update: {merged}")
-                        await _broadcast_ports_update(merged)
-                    except Exception:
-                        pass
+                        await _broadcast_ports_update(merged, source="heartbeat")
+                    except Exception as e:
+                        print(f"[Preview] heartbeat ports check failed: {e}")
         except Exception:
             pass
 
@@ -698,6 +741,7 @@ async def websocket_chat(websocket: WebSocket, project_id: str):
             async def on_agent_step(step: AgentStep):
                 nonlocal _last_known_ports
                 step_dict = step.to_dict()
+                step_started = time.perf_counter()
                 await ws_manager.broadcast(project_id, {
                     "type": "agent_step",
                     "step_type": step_dict.get("type"),
@@ -708,6 +752,11 @@ async def websocket_chat(websocket: WebSocket, project_id: str):
                     "tool_result": step_dict.get("tool_result"),
                     "timestamp": step_dict.get("timestamp"),
                 })
+                step_elapsed_ms = (time.perf_counter() - step_started) * 1000
+                print(
+                    f"[AgentStep] broadcast type={step_dict.get('type')} tool={step_dict.get('tool_name')} "
+                    f"project={project_id} took={step_elapsed_ms:.1f}ms"
+                )
 
                 # After execute_command completes, check if a dev server appeared
                 if (step_dict.get("type") == "tool_result"
@@ -716,10 +765,9 @@ async def websocket_chat(websocket: WebSocket, project_id: str):
                         ports = docker_manager.get_ports(project_id)
                         servers = await docker_manager.find_running_servers(project_id)
                         merged = {**ports, **servers}
-                        print(f"[Preview] Port change after execute_command: {merged}")
-                        await _broadcast_ports_update(merged)
-                    except Exception:
-                        pass
+                        await _broadcast_ports_update(merged, source="execute_command_step")
+                    except Exception as e:
+                        print(f"[Preview] execute_command ports check failed: {e}")
 
             agent_timeout = settings.AGENT_TIMEOUT_SECONDS
             run_kw = {
@@ -754,6 +802,7 @@ async def websocket_chat(websocket: WebSocket, project_id: str):
 
                 run_kw["on_stream_chunk"] = _on_stream_chunk
             try:
+                run_started = time.perf_counter()
                 if agent_timeout > 0:
                     result = await asyncio.wait_for(
                         engine.run(**run_kw),
@@ -762,6 +811,7 @@ async def websocket_chat(websocket: WebSocket, project_id: str):
                 else:
                     # Как в ChatGPT: без глобального лимита, только таймаут на каждый запрос к LLM
                     result = await engine.run(**run_kw)
+                print(f"[Agent] engine.run completed project={project_id} took={(time.perf_counter() - run_started) * 1000:.1f}ms")
             except asyncio.TimeoutError:
                 mins = agent_timeout // 60
                 await ws_manager.broadcast(project_id, {
@@ -782,12 +832,14 @@ async def websocket_chat(websocket: WebSocket, project_id: str):
             })
 
             # Check for running dev servers
+            ports_started = time.perf_counter()
             container_ports = docker_manager.get_ports(project_id)
             running_servers = await docker_manager.find_running_servers(project_id)
+            print(f"[Preview] post-run port scan project={project_id} took={(time.perf_counter() - ports_started) * 1000:.1f}ms")
             p = dict(container_ports)
             p.update(running_servers)
             print(f"[Preview] project_id={project_id} container_ports={container_ports} running_servers={running_servers} -> broadcast ports={p}")
-            await _broadcast_ports_update(p, force=True)
+            await _broadcast_ports_update(p, force=True, source="agent_finish")
 
         except asyncio.CancelledError:
             # Не шлём agent_stopped здесь — он уже отправлен при получении команды stop в цикле WebSocket
@@ -811,10 +863,13 @@ async def websocket_chat(websocket: WebSocket, project_id: str):
                 print(f"🛑 [WebSocket] Stop command received")
                 engine.stop()
                 if agent_task and not agent_task.done():
+                    stop_wait_started = time.perf_counter()
                     try:
                         await asyncio.wait_for(asyncio.shield(agent_task), timeout=3.0)
                     except (asyncio.TimeoutError, asyncio.CancelledError):
                         agent_task.cancel()
+                    finally:
+                        print(f"[Agent] stop wait project={project_id} took={(time.perf_counter() - stop_wait_started) * 1000:.1f}ms")
                 print(f"[Chat] WS agent_stopped (user requested)")
                 await ws_manager.broadcast(project_id, {
                     "type": "agent_stopped",
@@ -883,11 +938,15 @@ async def websocket_chat(websocket: WebSocket, project_id: str):
     except WebSocketDisconnect:
         ws_manager.disconnect(project_id, websocket)
         heartbeat_task.cancel()
+        if _ports_update_task and not _ports_update_task.done():
+            _ports_update_task.cancel()
         if agent_task and not agent_task.done():
             engine.stop()
     except Exception as e:
         ws_manager.disconnect(project_id, websocket)
         heartbeat_task.cancel()
+        if _ports_update_task and not _ports_update_task.done():
+            _ports_update_task.cancel()
         if agent_task and not agent_task.done():
             engine.stop()
         print(f"WebSocket error: {e}")
