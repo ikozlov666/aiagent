@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #0a0a0f;
+  --surface: #12121a;
+  --surface2: #1a1a26;
+  --border: #2a2a3a;
+}
+
+body {
+  background: var(--bg);
+  color: #e8e8f0;
+  margin: 0;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--surface);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #3a3a4a;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #4a4a5a;
+}
+
+/* Animations */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.3s ease forwards;
+}
+
+.animate-pulse-dot {
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+/* Resizable panels: библиотека использует data-separator для разделителя (не data-panel-resize-handle) */
+[data-separator] {
+  position: relative;
+  flex-shrink: 0 !important;
+  width: 12px !important;
+  min-width: 12px !important;
+  touch-action: none !important;
+  user-select: none !important;
+  cursor: col-resize !important;
+  background-color: rgba(55, 65, 81, 0.8) !important;
+  z-index: 10 !important;
+  pointer-events: auto !important;
+  transition: background-color 0.15s;
+}
+[data-separator]:hover {
+  background-color: rgba(59, 130, 246, 0.6) !important;
+}
+[data-separator][data-separator="disabled"] {
+  cursor: default !important;
+  pointer-events: none !important;
+}
+
+/* Ensure panels are properly sized */
+[data-group] {
+  display: flex !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+[data-group][data-panel-group-direction="horizontal"] {
+  flex-direction: row !important;
+}
+
+[data-panel] {
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  min-width: 0 !important;
+}
+
+/* Ensure panels and group don't block resize */
+[data-panel],
+[data-group] {
+  pointer-events: auto !important;
+  position: relative !important;
+}

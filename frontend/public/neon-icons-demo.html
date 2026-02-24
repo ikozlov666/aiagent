@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Неоновые иконки — белый неон</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      min-height: 100vh;
+      background: linear-gradient(135deg, #1a1525 0%, #2d2440 50%, #1e1a2e 100%);
+      font-family: system-ui, sans-serif;
+      color: #e0e0e0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0,0,0,.15) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,0,0,.15) 1px, transparent 1px);
+      background-size: 32px 16px;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .wrap {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      max-width: 960px;
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 1.25rem;
+      font-size: 1.35rem;
+      font-weight: 600;
+      color: #fff;
+      text-shadow: 0 0 20px rgba(255,255,255,.5);
+    }
+    .icons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.25rem;
+      justify-content: center;
+      align-items: center;
+    }
+    .icon-cell {
+      width: 120px;
+      height: 120px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,.3);
+      border-radius: 12px;
+      padding: 0.75rem;
+    }
+    .icon-cell svg {
+      width: 72px;
+      height: 72px;
+    }
+    .logo-row {
+      text-align: center;
+      margin-top: 1.5rem;
+      padding: 1rem 1.5rem;
+      background: rgba(0,0,0,.25);
+      border-radius: 12px;
+    }
+    .logo-row .logo {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .logo-row .logo svg { width: 40px; height: 40px; }
+    .logo-row .logo span { font-size: 1.25rem; font-weight: 700; letter-spacing: 0.05em; }
+    .hint {
+      margin-top: 1rem;
+      font-size: 0.75rem;
+      color: rgba(255,255,255,.45);
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Неон — контур со свечением (белый)</h1>
+
+    <div class="icons">
+      <!-- Белый неон: один фильтр с сильным свечением для всех иконок -->
+      <div class="icon-cell">
+        <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <filter id="white-neon" x="-80%" y="-80%" width="260%" height="260%">
+              <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur1"/>
+              <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur2"/>
+              <feGaussianBlur in="SourceGraphic" stdDeviation="9" result="blur3"/>
+              <feMerge>
+                <feMergeNode in="blur3"/>
+                <feMergeNode in="blur2"/>
+                <feMergeNode in="blur1"/>
+                <feMergeNode in="SourceGraphic"/>
+              </feMerge>
+            </filter>
+          </defs>
+          <g filter="url(#white-neon)" stroke="#ffffff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <ellipse cx="32" cy="24" rx="14" ry="10"/>
+            <path d="M20 38 L24 58 L32 62 L40 58 L44 38"/>
+            <line x1="32" y1="34" x2="32" y2="42"/>
+            <circle cx="26" cy="22" r="2"/>
+            <circle cx="38" cy="22" r="2"/>
+            <rect x="28" y="48" width="8" height="6" rx="1"/>
+          </g>
+        </svg>
+      </div>
+      <div class="icon-cell">
+        <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <filter id="white-neon2" x="-80%" y="-80%" width="260%" height="260%">
+              <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="b1"/>
+              <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="b2"/>
+              <feGaussianBlur in="SourceGraphic" stdDeviation="9" result="b3"/>
+              <feMerge><feMergeNode in="b3"/><feMergeNode in="b2"/><feMergeNode in="b1"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+          <g filter="url(#white-neon2)" stroke="#ffffff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M24 18 L16 32 L24 46"/>
+            <path d="M40 18 L48 32 L40 46"/>
+            <path d="M36 22 L28 42"/>
+          </g>
+        </svg>
+      </div>
+      <div class="icon-cell">
+        <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <filter id="white-neon3" x="-80%" y="-80%" width="260%" height="260%">
+              <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="o1"/>
+              <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="o2"/>
+              <feGaussianBlur in="SourceGraphic" stdDeviation="9" result="o3"/>
+              <feMerge><feMergeNode in="o3"/><feMergeNode in="o2"/><feMergeNode in="o1"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+          <g filter="url(#white-neon3)" stroke="#ffffff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M32 14 C20 14 18 26 18 34 C18 42 24 46 32 46 C40 46 46 42 46 34 C46 26 44 14 32 14 Z"/>
+            <path d="M32 46 L32 52 M28 56 L36 56"/>
+          </g>
+        </svg>
+      </div>
+      <div class="icon-cell">
+        <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <filter id="white-neon4" x="-80%" y="-80%" width="260%" height="260%">
+              <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="p1"/>
+              <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="p2"/>
+              <feGaussianBlur in="SourceGraphic" stdDeviation="9" result="p3"/>
+              <feMerge><feMergeNode in="p3"/><feMergeNode in="p2"/><feMergeNode in="p1"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+          <g filter="url(#white-neon4)" stroke="#ffffff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="14" y="28" width="36" height="28" rx="2"/>
+            <line x1="32" y1="28" x2="32" y2="56"/>
+            <path d="M32 20 L32 28 M26 24 L38 24"/>
+            <ellipse cx="32" cy="18" rx="6" ry="4"/>
+          </g>
+        </svg>
+      </div>
+      <div class="icon-cell">
+        <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <filter id="white-neon5" x="-80%" y="-80%" width="260%" height="260%">
+              <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="t1"/>
+              <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="t2"/>
+              <feGaussianBlur in="SourceGraphic" stdDeviation="9" result="t3"/>
+              <feMerge><feMergeNode in="t3"/><feMergeNode in="t2"/><feMergeNode in="t1"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+          <g filter="url(#white-neon5)" stroke="#ffffff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M32 8 L40 24 L34 24 L42 38 L36 38 L44 52 L20 52 L28 38 L22 38 L30 24 L24 24 Z"/>
+            <rect x="28" y="52" width="8" height="6" rx="1"/>
+          </g>
+        </svg>
+      </div>
+    </div>
+
+    <div class="logo-row">
+      <div class="logo">
+        <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <filter id="white-neon-logo" x="-80%" y="-80%" width="260%" height="260%">
+              <feGaussianBlur in="SourceGraphic" stdDeviation="2" result="lg1"/>
+              <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="lg2"/>
+              <feMerge><feMergeNode in="lg2"/><feMergeNode in="lg1"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+          <g filter="url(#white-neon-logo)" stroke="#ffffff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+            <ellipse cx="32" cy="24" rx="14" ry="10"/>
+            <path d="M20 38 L24 56 L32 60 L40 56 L44 38"/>
+            <line x1="32" y1="34" x2="32" y2="42"/>
+            <circle cx="26" cy="22" r="2"/>
+            <circle cx="38" cy="22" r="2"/>
+          </g>
+        </svg>
+        <span style="color: #fff; text-shadow: 0 0 15px rgba(255,255,255,.9), 0 0 30px rgba(255,255,255,.5);">AI Agent</span>
+      </div>
+    </div>
+
+    <p class="hint">Контур без заливки (stroke), белый (#fff) + фильтр feGaussianBlur (3 слоя) = белое неоновое свечение.</p>
+  </div>
+</body>
+</html>
