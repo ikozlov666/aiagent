@@ -5,6 +5,7 @@ Uses a persistent browser instance via CDP (Chrome DevTools Protocol).
 import asyncio
 import base64
 import json
+import time
 from docker_manager.manager import docker_manager
 
 
@@ -514,14 +515,30 @@ class BrowserTools:
 
     def __init__(self, project_id: str):
         self.project_id = project_id
+        # Cache browser readiness checks to avoid expensive ping+exec on every action.
+        self._last_browser_check_ts = 0.0
+        self._browser_check_ttl_sec = 15.0
+        self._browser_action_script_ready = False
 
-    async def _ensure_browser_running(self) -> None:
+    def _should_check_browser(self) -> bool:
+        """Return True when it's time to re-check keepalive browser availability."""
+        return (time.monotonic() - self._last_browser_check_ts) >= self._browser_check_ttl_sec
+
+    def _mark_browser_checked(self) -> None:
+        """Record the last moment browser keepalive was checked/launched."""
+        self._last_browser_check_ts = time.monotonic()
+
+    async def _ensure_browser_running(self, force: bool = False) -> None:
         """Запустить в контейнере постоянный процесс с браузером (если ещё не запущен), чтобы окно было видно в noVNC."""
+        if not force and not self._should_check_browser():
+            return
+
         await docker_manager.write_file(self.project_id, "/tmp/browser_ping.py", BROWSER_PING_SCRIPT)
         ping = await docker_manager.exec_command(
             self.project_id, "python3 /tmp/browser_ping.py", workdir="/workspace", timeout=5
         )
         if ping.get("stdout", "").strip() == "OK":
+            self._mark_browser_checked()
             return
         await docker_manager.write_file(self.project_id, "/tmp/browser_keepalive.py", BROWSER_KEEPALIVE_SCRIPT)
         await docker_manager.exec_command(
@@ -531,6 +548,7 @@ class BrowserTools:
             timeout=5,
         )
         await asyncio.sleep(3)
+        self._mark_browser_checked()
 
     def _log_args(self, args: dict, max_val_len: int = 80) -> dict:
         """Сокращённые аргументы для логов (без огромных content)."""
@@ -546,13 +564,20 @@ class BrowserTools:
                 out[k] = v
         return out
 
+    async def _ensure_action_script(self, force: bool = False) -> None:
+        """Write browser action script once per engine instance (or force rewrite)."""
+        if self._browser_action_script_ready and not force:
+            return
+        await docker_manager.write_file(
+            self.project_id, "/tmp/browser_action.py", BROWSER_ACTION_SCRIPT
+        )
+        self._browser_action_script_ready = True
+
     async def _execute_browser_script(self, action: str, args: dict) -> dict:
         """Execute Playwright script in the sandbox."""
         await self._ensure_browser_running()
         print(f"[Browser] project={self.project_id} action={action} args={self._log_args(args)}")
-        await docker_manager.write_file(
-            self.project_id, "/tmp/browser_action.py", BROWSER_ACTION_SCRIPT
-        )
+        await self._ensure_action_script()
         args_json = json.dumps(args, ensure_ascii=False)
         await docker_manager.write_file(
             self.project_id, "/tmp/browser_action_args.json", args_json
@@ -566,9 +591,45 @@ class BrowserTools:
         )
 
         if not result["success"]:
-            err = result.get("stderr", "Unknown error")[:200]
+            stderr_full = result.get("stderr", "") or ""
+            err = stderr_full[:200] if stderr_full else "Unknown error"
             print(f"[Browser] action={action} result=error stderr={err}")
-            return {"success": False, "error": result.get("stderr", "Unknown error")}
+
+            # If browser died while TTL window is active, force refresh once and retry action.
+            browser_down_markers = (
+                "connect_over_cdp",
+                "ECONNREFUSED",
+                "Target page, context or browser has been closed",
+                "BrowserType.connect_over_cdp",
+            )
+            if any(marker in stderr_full for marker in browser_down_markers):
+                print(f"[Browser] action={action} detected stale browser, forcing keepalive check + retry")
+                await self._ensure_browser_running(force=True)
+                result = await docker_manager.exec_command(
+                    self.project_id,
+                    command,
+                    workdir="/workspace",
+                    timeout=60,
+                )
+                if not result["success"]:
+                    retry_err = (result.get("stderr", "") or "Unknown error")[:200]
+                    print(f"[Browser] action={action} retry_failed stderr={retry_err}")
+                    return {"success": False, "error": result.get("stderr", "Unknown error")}
+            elif "can't open file '/tmp/browser_action.py'" in stderr_full or "No such file or directory" in stderr_full:
+                print(f"[Browser] action={action} action script missing, forcing rewrite + retry")
+                await self._ensure_action_script(force=True)
+                result = await docker_manager.exec_command(
+                    self.project_id,
+                    command,
+                    workdir="/workspace",
+                    timeout=60,
+                )
+                if not result["success"]:
+                    retry_err = (result.get("stderr", "") or "Unknown error")[:200]
+                    print(f"[Browser] action={action} retry_failed after script rewrite stderr={retry_err}")
+                    return {"success": False, "error": result.get("stderr", "Unknown error")}
+            else:
+                return {"success": False, "error": result.get("stderr", "Unknown error")}
 
         # Parse JSON output
         try:

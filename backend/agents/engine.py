@@ -69,7 +69,7 @@ class AgentEngine:
     Core agent loop: receives task → classifies → selects prompt → executes with tools → returns result.
     """
 
-    MAX_ITERATIONS = 50  # Safety limit
+    MAX_ITERATIONS = settings.AGENT_MAX_ITERATIONS  # Safety limit (configurable)
 
     # Class-level regex patterns cache (lazy initialization)
     _filepath_regex = None
@@ -512,7 +512,7 @@ class AgentEngine:
 
                 return await engine._run_loop(
                     0, wrapped_on_step, task_type, images,
-                    max_iterations=25,
+                    max_iterations=settings.AGENT_SUBTASK_MAX_ITERATIONS,
                     stop_ref=lambda: self._stop_requested,
                 )
 
@@ -522,10 +522,16 @@ class AgentEngine:
                 all_results.append(res)
             else:
                 print(f"⚡ [Agent] Параллельное выполнение {len(wave)} подзадач (волна {wave_idx + 1})")
-                results = await asyncio.gather(*[run_one(st) for st in wave])
+                results = await asyncio.gather(*[run_one(st) for st in wave], return_exceptions=True)
                 for st, res in zip(wave, results):
-                    result_by_id[st["id"]] = res
-                    all_results.append(res)
+                    if isinstance(res, Exception):
+                        err = f"Подзадача '{st.get('id', '?')}' завершилась с ошибкой: {res}"
+                        print(f"❌ [Agent] Parallel subtask failed: {err}")
+                        result_by_id[st["id"]] = err
+                        all_results.append(err)
+                    else:
+                        result_by_id[st["id"]] = res
+                        all_results.append(res)
 
         ordered = [result_by_id.get(s["id"], "") for s in subtasks]
         return await merge_results(user_message, ordered)
@@ -538,6 +544,7 @@ class AgentEngine:
         images: Optional[list],
         max_iterations: int,
         stop_ref: Optional[Callable[[], bool]],
+        allow_auto_extend: bool = True,
     ) -> str:
         """Core agent loop: LLM + tools. Uses self.messages and self.tool_executor."""
         step_num = step_num_start
@@ -881,25 +888,70 @@ class AgentEngine:
                             execute_single_tool(tc, current_step + idx * 2)
                             for idx, tc in enumerate(batch)
                         ]
-                        batch_results = await asyncio.gather(*tasks)
-                        tool_results.extend(batch_results)
+                        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+                        for idx, br in enumerate(batch_results):
+                            if isinstance(br, Exception):
+                                tc = batch[idx]
+                                tn = tc.function.name if getattr(tc, "function", None) else "unknown"
+                                print(f"❌ [Agent] Tool batch item failed ({tn}): {br}")
+                                tool_results.append({
+                                    "tool_call_id": tc.id,
+                                    "tool_name": tn,
+                                    "result": {"success": False, "error": str(br), "result": None},
+                                })
+                            elif isinstance(br, dict):
+                                tool_results.append(br)
+                            else:
+                                tc = batch[idx]
+                                tn = tc.function.name if getattr(tc, "function", None) else "unknown"
+                                print(f"⚠️ [Agent] Tool batch item returned non-dict ({tn}): {type(br).__name__}")
+                                tool_results.append({
+                                    "tool_call_id": tc.id,
+                                    "tool_name": tn,
+                                    "result": {"success": False, "error": "Tool returned invalid result", "result": None},
+                                })
                         current_step += len(batch) * 2
                         i += len(batch)
                     else:
                         result = await execute_single_tool(tool_call, current_step)
-                        tool_results.append(result)
+                        if isinstance(result, dict):
+                            tool_results.append(result)
+                        else:
+                            print(f"⚠️ [Agent] Tool returned non-dict: {type(result).__name__}")
+                            tool_results.append({
+                                "tool_call_id": tool_call.id,
+                                "tool_name": tool_name,
+                                "result": {"success": False, "error": "Tool returned invalid result", "result": None},
+                            })
                         current_step += 2
                         i += 1
                 else:
                     result = await execute_single_tool(tool_call, current_step)
-                    tool_results.append(result)
+                    if isinstance(result, dict):
+                        tool_results.append(result)
+                    else:
+                        print(f"⚠️ [Agent] Tool returned non-dict: {type(result).__name__}")
+                        tool_results.append({
+                            "tool_call_id": tool_call.id,
+                            "tool_name": tool_name,
+                            "result": {"success": False, "error": "Tool returned invalid result", "result": None},
+                        })
                     current_step += 2
                     i += 1
 
             # ── Add tool messages with smart compression ──────────
             for tr in tool_results:
-                result = tr["result"]
-                t_name = tr["tool_name"]
+                if not isinstance(tr, dict):
+                    print(f"⚠️ [Agent] Skipping malformed tool result item: {type(tr).__name__}")
+                    continue
+                result = tr.get("result")
+                t_name = tr.get("tool_name", "unknown")
+                t_call_id = tr.get("tool_call_id")
+                if t_call_id is None:
+                    print(f"⚠️ [Agent] Skipping tool result without tool_call_id: {tr}")
+                    continue
+                if not isinstance(result, dict):
+                    result = {"success": False, "error": "Malformed tool result", "result": None}
 
                 # Serialize and compress using the context module
                 raw_json = json.dumps(result, ensure_ascii=False)
@@ -907,9 +959,29 @@ class AgentEngine:
 
                 self.messages.append({
                     "role": "tool",
-                    "tool_call_id": tr["tool_call_id"],
+                    "tool_call_id": t_call_id,
                     "content": compressed,
                 })
+
+        extension = max(0, int(getattr(settings, "AGENT_ITERATION_EXTENSION", 0) or 0))
+        if allow_auto_extend and extension > 0 and not stop_check() and not self.escalation.is_stuck:
+            note = (
+                f"⚙️ Достигнут лимит {max_iterations} итераций, "
+                f"автоматически добавляю ещё {extension} для завершения задачи..."
+            )
+            extend_step = AgentStep(step_number=step_num + 1, type="thinking", content=note)
+            if on_step:
+                await on_step(extend_step)
+            print(f"🔁 [Agent] Auto-extending iterations: +{extension}")
+            return await self._run_loop(
+                step_num,
+                on_step,
+                task_type,
+                images,
+                extension,
+                stop_ref,
+                allow_auto_extend=False,
+            )
 
         return "Достигнут лимит итераций. Задача слишком сложная — попробуйте разбить на подзадачи."
 

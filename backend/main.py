@@ -11,9 +11,11 @@ from typing import Optional, List
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import Response
 from pydantic import BaseModel
 import os
 import base64
+import mimetypes
 
 from config import settings
 from docker_manager.manager import docker_manager
@@ -380,6 +382,32 @@ async def read_file(project_id: str, filepath: str):
         raise HTTPException(500, f"Ошибка чтения файла: {str(e)}")
 
 
+
+
+@app.get("/api/projects/{project_id}/files/raw")
+async def read_file_raw(project_id: str, filepath: str):
+    """Read a file as raw bytes for previews (images/pdf/audio/video/binary)."""
+    container = docker_manager.get_container(project_id)
+    if not container:
+        raise HTTPException(404, "Project not found")
+
+    validated_path = validate_filepath(filepath)
+
+    try:
+        b64 = await docker_manager.read_file_base64(project_id, f"/workspace/{validated_path}")
+        data = base64.b64decode(b64, validate=False)
+        if len(data) > MAX_FILE_SIZE:
+            raise HTTPException(413, f"File too large ({len(data) / 1024 / 1024:.1f}MB). Max: {MAX_FILE_SIZE / 1024 / 1024}MB")
+
+        media_type, _ = mimetypes.guess_type(validated_path)
+        headers = {"Content-Disposition": f'inline; filename="{validated_path.split("/")[-1]}"'}
+        return Response(content=data, media_type=media_type or "application/octet-stream", headers=headers)
+    except FileNotFoundError:
+        raise HTTPException(404, f"File not found: {filepath}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Ошибка чтения бинарного файла: {str(e)}")
 @app.post("/api/projects/{project_id}/files/write")
 async def write_file(project_id: str, req: WriteFileRequest):
     """Write a file to the project."""

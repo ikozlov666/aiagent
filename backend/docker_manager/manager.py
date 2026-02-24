@@ -245,6 +245,19 @@ class DockerManager:
             return result["stdout"] or ""
         raise FileNotFoundError(f"File not found: {filepath} — {result['stderr']}")
 
+    async def read_file_base64(self, project_id: str, filepath: str) -> str:
+        """Read file as base64 (supports binary files)."""
+        safe_path = self._shell_escape_path(filepath)
+        result = await self.exec_command(
+            project_id,
+            f"if [ -f '{safe_path}' ]; then base64 -w0 '{safe_path}'; else exit 44; fi"
+        )
+        if result.get("success"):
+            return (result.get("stdout") or "").strip()
+        if result.get("exit_code") == 44:
+            raise FileNotFoundError(f"File not found: {filepath}")
+        raise RuntimeError(result.get("stderr") or f"Failed to read file: {filepath}")
+
     async def write_file(self, project_id: str, filepath: str, content: str) -> dict:
         """Write a file to the sandbox."""
         safe_path = self._shell_escape_path(filepath)
