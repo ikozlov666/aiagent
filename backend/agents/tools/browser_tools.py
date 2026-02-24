@@ -563,13 +563,20 @@ class BrowserTools:
                 out[k] = v
         return out
 
+    async def _ensure_action_script(self, force: bool = False) -> None:
+        """Write browser action script once per engine instance (or force rewrite)."""
+        if self._browser_action_script_ready and not force:
+            return
+        await docker_manager.write_file(
+            self.project_id, "/tmp/browser_action.py", BROWSER_ACTION_SCRIPT
+        )
+        self._browser_action_script_ready = True
+
     async def _execute_browser_script(self, action: str, args: dict) -> dict:
         """Execute Playwright script in the sandbox."""
         await self._ensure_browser_running()
         print(f"[Browser] project={self.project_id} action={action} args={self._log_args(args)}")
-        await docker_manager.write_file(
-            self.project_id, "/tmp/browser_action.py", BROWSER_ACTION_SCRIPT
-        )
+        await self._ensure_action_script()
         args_json = json.dumps(args, ensure_ascii=False)
         await docker_manager.write_file(
             self.project_id, "/tmp/browser_action_args.json", args_json

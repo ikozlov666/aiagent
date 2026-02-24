@@ -69,7 +69,7 @@ class AgentEngine:
     Core agent loop: receives task → classifies → selects prompt → executes with tools → returns result.
     """
 
-    MAX_ITERATIONS = 50  # Safety limit
+    MAX_ITERATIONS = settings.AGENT_MAX_ITERATIONS  # Safety limit (configurable)
 
     # Class-level regex patterns cache (lazy initialization)
     _filepath_regex = None
@@ -512,7 +512,7 @@ class AgentEngine:
 
                 return await engine._run_loop(
                     0, wrapped_on_step, task_type, images,
-                    max_iterations=25,
+                    max_iterations=settings.AGENT_SUBTASK_MAX_ITERATIONS,
                     stop_ref=lambda: self._stop_requested,
                 )
 
@@ -522,10 +522,16 @@ class AgentEngine:
                 all_results.append(res)
             else:
                 print(f"⚡ [Agent] Параллельное выполнение {len(wave)} подзадач (волна {wave_idx + 1})")
-                results = await asyncio.gather(*[run_one(st) for st in wave])
+                results = await asyncio.gather(*[run_one(st) for st in wave], return_exceptions=True)
                 for st, res in zip(wave, results):
-                    result_by_id[st["id"]] = res
-                    all_results.append(res)
+                    if isinstance(res, Exception):
+                        err = f"Подзадача '{st.get('id', '?')}' завершилась с ошибкой: {res}"
+                        print(f"❌ [Agent] Parallel subtask failed: {err}")
+                        result_by_id[st["id"]] = err
+                        all_results.append(err)
+                    else:
+                        result_by_id[st["id"]] = res
+                        all_results.append(res)
 
         ordered = [result_by_id.get(s["id"], "") for s in subtasks]
         return await merge_results(user_message, ordered)
@@ -538,6 +544,7 @@ class AgentEngine:
         images: Optional[list],
         max_iterations: int,
         stop_ref: Optional[Callable[[], bool]],
+        allow_auto_extend: bool = True,
     ) -> str:
         """Core agent loop: LLM + tools. Uses self.messages and self.tool_executor."""
         step_num = step_num_start
@@ -955,6 +962,26 @@ class AgentEngine:
                     "tool_call_id": t_call_id,
                     "content": compressed,
                 })
+
+        extension = max(0, int(getattr(settings, "AGENT_ITERATION_EXTENSION", 0) or 0))
+        if allow_auto_extend and extension > 0 and not stop_check() and not self.escalation.is_stuck:
+            note = (
+                f"⚙️ Достигнут лимит {max_iterations} итераций, "
+                f"автоматически добавляю ещё {extension} для завершения задачи..."
+            )
+            extend_step = AgentStep(step_number=step_num + 1, type="thinking", content=note)
+            if on_step:
+                await on_step(extend_step)
+            print(f"🔁 [Agent] Auto-extending iterations: +{extension}")
+            return await self._run_loop(
+                step_num,
+                on_step,
+                task_type,
+                images,
+                extension,
+                stop_ref,
+                allow_auto_extend=False,
+            )
 
         return "Достигнут лимит итераций. Задача слишком сложная — попробуйте разбить на подзадачи."
 
