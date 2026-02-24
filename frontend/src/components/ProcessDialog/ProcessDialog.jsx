@@ -9,6 +9,42 @@ function formatTime(ts) {
 
 /** Only DeepSeek model messages and final responses */
 const DIALOG_TYPES = new Set(['llm_text', 'response'])
+const ACTION_TYPES = new Set(['thinking', 'tool_call', 'tool_result'])
+
+function renderToolSummary(step) {
+  if (!step) return 'Ожидание действий…'
+
+  if (step.type === 'thinking') return step.content || 'Планирую следующий шаг'
+
+  if (step.type === 'tool_call') {
+    const name = step.tool_name || 'tool'
+    const args = step.tool_args || {}
+    if (name === 'write_file' && args.filepath) {
+      return `Создаю файл: ${args.filepath}`
+    }
+    if (name === 'write_files' && Array.isArray(args.files)) {
+      const first = args.files[0]?.filepath
+      return first
+        ? `Создаю ${args.files.length} файлов (например, ${first})`
+        : `Создаю ${args.files.length} файлов`
+    }
+    if (name === 'execute_command' && args.command) {
+      return `Запускаю команду: ${String(args.command).slice(0, 70)}`
+    }
+    if ((name === 'read_file' || name === 'list_files') && (args.filepath || args.path)) {
+      return `${name === 'read_file' ? 'Читаю файл' : 'Сканирую файлы'}: ${args.filepath || args.path}`
+    }
+    return `Выполняю: ${name}`
+  }
+
+  if (step.type === 'tool_result') {
+    if (step.tool_result?.success) return 'Шаг выполнен успешно ✅'
+    if (step.tool_result?.error) return `Ошибка шага: ${String(step.tool_result.error).slice(0, 90)}`
+    return 'Получен результат шага'
+  }
+
+  return step.content || 'Выполняется действие…'
+}
 
 export default function ProcessDialog() {
   const { agentSteps, agentStatus } = useStore()
@@ -16,6 +52,8 @@ export default function ProcessDialog() {
 
   // Filter: only model text output
   const dialogSteps = agentSteps.filter(s => DIALOG_TYPES.has(s.type))
+  const actionSteps = agentSteps.filter(s => ACTION_TYPES.has(s.type))
+  const lastActionStep = actionSteps[actionSteps.length - 1]
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -41,6 +79,18 @@ export default function ProcessDialog() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        {isWorking && (
+          <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2">
+            <div className="text-xs text-blue-300 mb-1">Что сейчас происходит</div>
+            <div className="text-sm text-blue-100 whitespace-pre-wrap break-words">
+              {renderToolSummary(lastActionStep)}
+            </div>
+            <div className="text-xs text-blue-300/80 mt-1">
+              Шагов выполнено: {actionSteps.length}
+            </div>
+          </div>
+        )}
+
         {dialogSteps.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-gray-600 space-y-2">
             <div className="text-3xl">💬</div>
@@ -74,6 +124,19 @@ export default function ProcessDialog() {
             </div>
           )
         })}
+
+        {actionSteps.length > 0 && (
+          <div className="rounded border border-dark-500 bg-dark-700/50 p-2">
+            <div className="text-xs text-gray-400 mb-2">Последние действия агента</div>
+            <div className="space-y-1">
+              {actionSteps.slice(-5).map((step, i) => (
+                <div key={`${step.timestamp || i}-${i}`} className="text-xs text-gray-300 truncate">
+                  • {renderToolSummary(step)}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div ref={bottomRef} />
       </div>
