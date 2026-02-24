@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     AGENT_ENHANCED_CONTEXT: bool = True  # Richer context summary (files, URL, errors)
     AGENT_CURRENT_GOAL_IN_CONTEXT: bool = True  # Add "current goal" when context is compressed
     AGENT_REDUCED_MAX_TOKENS: bool = True  # Use 1536 instead of 2048 in main loop (faster)
+    AGENT_MAX_ITERATIONS: int = 50  # Base iteration budget for the main agent loop
+    AGENT_SUBTASK_MAX_ITERATIONS: int = 25  # Iteration budget for each parallel subtask engine
+    AGENT_ITERATION_EXTENSION: int = 20  # Extra iterations when limit is reached but work is still progressing
 
     # ============================================
     # Redis (optional, for sessions/caching)
