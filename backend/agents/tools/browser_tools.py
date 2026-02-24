@@ -229,6 +229,30 @@ async def main():
         browser = None
         page = None
         connected_to_existing = False
+
+        async def attach_failure_artifacts(result_obj):
+            """Attach debug metadata for failed actions so incidents are easier to investigate."""
+            if not isinstance(result_obj, dict) or result_obj.get('success', True):
+                return result_obj
+            if not page:
+                return result_obj
+
+            try:
+                screenshots_dir = '/workspace/.screenshots'
+                os.makedirs(screenshots_dir, exist_ok=True)
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                debug_path = f'{screenshots_dir}/failure_{action}_{timestamp}.png'
+                await page.screenshot(path=debug_path, full_page=True)
+                result_obj['debug_screenshot_path'] = debug_path.replace('/workspace/', '')
+            except Exception:
+                pass
+
+            try:
+                result_obj['url'] = page.url
+                result_obj['title'] = await page.title()
+            except Exception:
+                pass
+            return result_obj
         
         # Try to connect to existing browser
         try:
@@ -269,31 +293,33 @@ async def main():
         try:
             if action == 'navigate':
                 url = args.get('url', '')
-                await page.goto(url, wait_until='domcontentloaded', timeout=30000)
+                timeout = int(args.get('timeout', 30000))
+                await page.goto(url, wait_until='domcontentloaded', timeout=timeout)
                 await asyncio.sleep(0.6)
                 result = {'success': True, 'url': page.url, 'title': await page.title()}
             
             elif action == 'click':
                 selector = args.get('selector', '')
+                timeout = int(args.get('timeout', 5000))
                 last_err = None
                 done = False
                 for attempt in range(2):
                     try:
                         if attempt == 1:
-                            await page.wait_for_selector(selector, state='visible', timeout=2000)
-                        await page.click(selector, timeout=5000)
+                            await page.wait_for_selector(selector, state='visible', timeout=min(timeout, 2000))
+                        await page.click(selector, timeout=timeout)
                         done = True
                         break
                     except Exception as e1:
                         last_err = e1
                         try:
-                            await page.click('text="' + selector.replace('"', '\\\\"') + '"', timeout=5000)
+                            await page.click('text="' + selector.replace('"', '\\\\"') + '"', timeout=timeout)
                             done = True
                             break
                         except Exception as e2:
                             last_err = e2
                             try:
-                                await page.get_by_text(selector, exact=False).first.click(timeout=5000)
+                                await page.get_by_text(selector, exact=False).first.click(timeout=timeout)
                                 done = True
                                 break
                             except Exception as e3:
@@ -309,11 +335,12 @@ async def main():
             elif action == 'type':
                 selector = args.get('selector', '')
                 text = args.get('text', '')
+                timeout = int(args.get('timeout', 5000))
                 last_err = None
                 done = False
                 for attempt in range(2):
                     try:
-                        await page.fill(selector, text)
+                        await page.fill(selector, text, timeout=timeout)
                         done = True
                         break
                     except Exception as e:
@@ -494,6 +521,8 @@ async def main():
             
             else:
                 result = {'success': False, 'error': f'Unknown action: {action}'}
+
+            result = await attach_failure_artifacts(result)
             
             print(json.dumps(result))
         
@@ -637,13 +666,26 @@ class BrowserTools:
             if not output:
                 print(f"[Browser] action={action} empty stdout")
                 return {"success": False, "error": "Browser script returned no output"}
-            # Extract last JSON object from output (may have warnings before)
-            json_start = output.rfind('{')
-            if json_start < 0:
-                print(f"[Browser] action={action} no JSON in output: {output[:200]}")
-                return {"success": False, "error": f"No JSON in browser output: {output[:200]}"}
-            output = output[json_start:]
-            out = json.loads(output)
+
+            out = None
+            # Browser may print warnings/log lines before JSON.
+            # Parse from the end line-by-line and pick the last valid JSON object.
+            for line in reversed(output.splitlines()):
+                line = line.strip()
+                if not line or not line.startswith("{"):
+                    continue
+                try:
+                    candidate = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(candidate, dict):
+                    out = candidate
+                    break
+
+            if out is None:
+                # Fallback: try parsing the whole stdout as JSON
+                out = json.loads(output)
+
             url = out.get("url", "")
             success = out.get("success", False)
             err = out.get("error", "")
@@ -660,17 +702,17 @@ class BrowserTools:
                 "error": f"Failed to parse result: {e}. Output: {result['stdout'][:500]}",
             }
 
-    async def navigate(self, url: str) -> dict:
+    async def navigate(self, url: str, timeout: int = 30000) -> dict:
         """Navigate to URL."""
-        return await self._execute_browser_script("navigate", {"url": url})
+        return await self._execute_browser_script("navigate", {"url": url, "timeout": timeout})
 
-    async def click(self, selector: str) -> dict:
+    async def click(self, selector: str, timeout: int = 5000) -> dict:
         """Click on element."""
-        return await self._execute_browser_script("click", {"selector": selector})
+        return await self._execute_browser_script("click", {"selector": selector, "timeout": timeout})
 
-    async def type_text(self, selector: str, text: str) -> dict:
+    async def type_text(self, selector: str, text: str, timeout: int = 5000) -> dict:
         """Type text into input."""
-        return await self._execute_browser_script("type", {"selector": selector, "text": text})
+        return await self._execute_browser_script("type", {"selector": selector, "text": text, "timeout": timeout})
 
     async def select_option(self, selector: str, value: str = "", label: str = "") -> dict:
         """Select option in a <select> by value or label."""

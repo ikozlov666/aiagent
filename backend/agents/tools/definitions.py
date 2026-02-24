@@ -117,6 +117,11 @@ TOOLS = [
                     "url": {
                         "type": "string",
                         "description": "URL to navigate to, e.g. 'http://localhost:3000' or 'https://example.com'"
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Optional timeout in milliseconds for page load.",
+                        "default": 30000
                     }
                 },
                 "required": ["url"]
@@ -134,6 +139,11 @@ TOOLS = [
                     "selector": {
                         "type": "string",
                         "description": "CSS selector (e.g. 'button.submit') or text content to click"
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Optional timeout in milliseconds for click attempts.",
+                        "default": 5000
                     }
                 },
                 "required": ["selector"]
@@ -155,6 +165,11 @@ TOOLS = [
                     "text": {
                         "type": "string",
                         "description": "Text to type into the field"
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Optional timeout in milliseconds for locating/filling the input.",
+                        "default": 5000
                     }
                 },
                 "required": ["selector", "text"]

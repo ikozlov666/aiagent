@@ -1095,7 +1095,9 @@ class AgentEngine:
             bad = r.get("bad_status_responses", [])
             return f"✅ Сеть: {len(fails)} сбоев запросов, {len(bad)} ответов 4xx/5xx."
         elif tool_name == "browser_execute_script":
-            return f"✅ Скрипт выполнен: {r.get('result', 'ok')[:80]}"
+            script_result = r.get('result')
+            preview = str(script_result if script_result is not None else 'ok')
+            return f"✅ Скрипт выполнен: {preview[:80]}"
         elif tool_name == "browser_scroll":
             return f"✅ Страница прокручена: {r.get('scrolled', 'ok')}"
 
