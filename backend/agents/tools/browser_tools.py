@@ -666,13 +666,26 @@ class BrowserTools:
             if not output:
                 print(f"[Browser] action={action} empty stdout")
                 return {"success": False, "error": "Browser script returned no output"}
-            # Extract last JSON object from output (may have warnings before)
-            json_start = output.rfind('{')
-            if json_start < 0:
-                print(f"[Browser] action={action} no JSON in output: {output[:200]}")
-                return {"success": False, "error": f"No JSON in browser output: {output[:200]}"}
-            output = output[json_start:]
-            out = json.loads(output)
+
+            out = None
+            # Browser may print warnings/log lines before JSON.
+            # Parse from the end line-by-line and pick the last valid JSON object.
+            for line in reversed(output.splitlines()):
+                line = line.strip()
+                if not line or not line.startswith("{"):
+                    continue
+                try:
+                    candidate = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(candidate, dict):
+                    out = candidate
+                    break
+
+            if out is None:
+                # Fallback: try parsing the whole stdout as JSON
+                out = json.loads(output)
+
             url = out.get("url", "")
             success = out.get("success", False)
             err = out.get("error", "")
@@ -689,17 +702,17 @@ class BrowserTools:
                 "error": f"Failed to parse result: {e}. Output: {result['stdout'][:500]}",
             }
 
-    async def navigate(self, url: str) -> dict:
+    async def navigate(self, url: str, timeout: int = 30000) -> dict:
         """Navigate to URL."""
-        return await self._execute_browser_script("navigate", {"url": url})
+        return await self._execute_browser_script("navigate", {"url": url, "timeout": timeout})
 
-    async def click(self, selector: str) -> dict:
+    async def click(self, selector: str, timeout: int = 5000) -> dict:
         """Click on element."""
-        return await self._execute_browser_script("click", {"selector": selector})
+        return await self._execute_browser_script("click", {"selector": selector, "timeout": timeout})
 
-    async def type_text(self, selector: str, text: str) -> dict:
+    async def type_text(self, selector: str, text: str, timeout: int = 5000) -> dict:
         """Type text into input."""
-        return await self._execute_browser_script("type", {"selector": selector, "text": text})
+        return await self._execute_browser_script("type", {"selector": selector, "text": text, "timeout": timeout})
 
     async def select_option(self, selector: str, value: str = "", label: str = "") -> dict:
         """Select option in a <select> by value or label."""
