@@ -223,6 +223,7 @@ class ToolExecutor:
         return {
             "success": result.get("success", False),
             "filled": result.get("filled", 0),
+            "applied": result.get("applied", []),
             "url": result.get("url", ""),
             "error": result.get("error"),
         }

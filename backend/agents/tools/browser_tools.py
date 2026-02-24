@@ -356,19 +356,62 @@ async def main():
                 steps = args.get('steps', [])
                 submit_selector = args.get('submit_selector', '')
                 errors = []
+                applied = []
                 for i, step in enumerate(steps):
                     sel = step.get('selector', '')
                     val = step.get('value', '')
                     if not sel:
                         continue
                     try:
-                        if step.get('type') == 'select':
-                            if step.get('value'):
-                                await page.select_option(sel, value=step['value'])
+                        field_meta = await page.evaluate("""(selector) => {
+                            const el = document.querySelector(selector);
+                            if (!el) return { exists: false };
+                            const tag = (el.tagName || '').toLowerCase();
+                            const role = ((el.getAttribute('role') || '') + '').toLowerCase();
+                            return {
+                                exists: true,
+                                tag,
+                                role,
+                                inputType: ((el.type || '') + '').toLowerCase(),
+                                isSelect: tag === 'select',
+                                isNativeMultiSelect: tag === 'select' && !!el.multiple,
+                                isAriaMultiSelect: ['listbox', 'combobox'].includes(role) &&
+                                    ((el.getAttribute('aria-multiselectable') || '') + '').toLowerCase() === 'true',
+                            };
+                        }""", sel)
+
+                        if not field_meta or not field_meta.get('exists'):
+                            raise Exception('element not found')
+
+                        requested_type = (step.get('type') or '').lower()
+                        wants_select = requested_type in ('select', 'dropdown', 'multiselect')
+                        is_selectish = field_meta.get('isSelect') or field_meta.get('role') in ('combobox', 'listbox')
+                        is_multi = field_meta.get('isNativeMultiSelect') or field_meta.get('isAriaMultiSelect') or requested_type == 'multiselect'
+
+                        if wants_select or is_selectish:
+                            selected = False
+                            if step.get('values') and isinstance(step.get('values'), list):
+                                await page.select_option(sel, [str(v) for v in step.get('values')])
+                                selected = True
+                            elif step.get('value'):
+                                if is_multi and isinstance(step.get('value'), str) and ',' in step.get('value'):
+                                    values = [x.strip() for x in step.get('value').split(',') if x.strip()]
+                                    if values:
+                                        await page.select_option(sel, values)
+                                        selected = True
+                                if not selected:
+                                    await page.select_option(sel, value=str(step['value']))
+                                    selected = True
                             elif step.get('label'):
-                                await page.select_option(sel, label=step['label'])
+                                await page.select_option(sel, label=str(step['label']))
+                                selected = True
+
+                            if not selected:
+                                raise Exception('select field requires value/values/label')
+                            applied.append({'selector': sel, 'mode': 'multiselect' if is_multi else 'select'})
                         else:
                             await page.fill(sel, str(val))
+                            applied.append({'selector': sel, 'mode': 'text'})
                     except Exception as e:
                         errors.append('%s: %s' % (sel, e))
                 if submit_selector:
@@ -378,9 +421,9 @@ async def main():
                     except Exception as e:
                         errors.append('submit %s: %s' % (submit_selector, e))
                 if errors:
-                    result = {'success': False, 'error': '; '.join(errors), 'url': page.url}
+                    result = {'success': False, 'error': '; '.join(errors), 'url': page.url, 'applied': applied}
                 else:
-                    result = {'success': True, 'filled': len(steps), 'url': page.url}
+                    result = {'success': True, 'filled': len(steps), 'url': page.url, 'applied': applied}
             
             elif action == 'select':
                 selector = args.get('selector', '')
@@ -427,30 +470,52 @@ async def main():
             elif action == 'get_page_structure':
                 await page.wait_for_load_state('domcontentloaded')
                 await asyncio.sleep(0.4)
-                # JS: single quotes for attr values to avoid Python backslash issues
+                # Return richer control metadata so LLM can choose type/click/select correctly.
                 elements = await page.evaluate("""() => {
                     const out = [];
-                    const sel = (el) => {
+                    const asSelector = (el) => {
                         if (el.id) return '#' + CSS.escape(el.id);
-                        if (el.name && /^(input|textarea|select)$/i.test(el.tagName))
+                        if (el.name && /^(input|textarea|select)$/i.test(el.tagName)) {
                             return el.tagName.toLowerCase() + '[name="' + (el.name || '').replace(/"/g, '\\\\"') + '"]';
+                        }
+                        const dt = el.getAttribute('data-testid') || el.getAttribute('data-test') || el.getAttribute('data-qa');
+                        if (dt) return '[data-testid="' + dt.replace(/"/g, '\\\\"') + '"]';
                         if (el.type && el.tagName === 'INPUT') return 'input[type="' + el.type + '"]';
                         return el.tagName.toLowerCase();
                     };
-                    document.querySelectorAll('input, textarea, button, [role="button"], a[href]').forEach(el => {
-                        if (!el.offsetParent) return;
-                        const tag = el.tagName.toLowerCase();
+                    const visible = (el) => !!(el.offsetParent || (el.getClientRects && el.getClientRects().length));
+                    const roleOf = (el) => ((el.getAttribute('role') || '') + '').toLowerCase();
+                    const textOf = (el) => ((el.value !== undefined ? el.value : el.innerText) || '').trim();
+
+                    document.querySelectorAll('input, textarea, select, button, [role="button"], [role="combobox"], [role="listbox"], a[href]').forEach(el => {
+                        if (!visible(el)) return;
+                        const tag = (el.tagName || '').toLowerCase();
+                        const role = roleOf(el);
+                        const type = ((el.type || '') + '').toLowerCase();
+                        const isSelect = tag === 'select';
+                        const isNativeMultiSelect = isSelect && !!el.multiple;
+                        const isRoleCombo = role === 'combobox';
+                        const isRoleListbox = role === 'listbox';
+                        const isAriaMultiSelect = (isRoleCombo || isRoleListbox) && (((el.getAttribute('aria-multiselectable') || '') + '').toLowerCase() === 'true');
+                        const optionsCount = isSelect ? el.options.length : Number(el.getAttribute('aria-setsize') || 0) || null;
+
                         out.push({
                             kind: tag === 'a' ? 'link' : tag,
-                            selector: sel(el),
-                            type: (el.type || '').toLowerCase() || null,
+                            selector: asSelector(el),
+                            tag,
+                            role: role || null,
+                            control_type: isNativeMultiSelect || isAriaMultiSelect ? 'multiselect' : (isSelect || isRoleCombo || isRoleListbox ? 'select' : 'input'),
+                            type: type || null,
                             name: el.name || null,
                             placeholder: (el.placeholder || '').slice(0, 60) || null,
                             label: (el.getAttribute('aria-label') || el.title || (el.closest('label') && el.closest('label').innerText) || '').trim().slice(0, 80),
-                            text: ((el.value !== undefined ? el.value : el.innerText) || '').trim().slice(0, 60) || null
+                            text: textOf(el).slice(0, 60) || null,
+                            is_select: isSelect || isRoleCombo || isRoleListbox,
+                            is_multiselect: isNativeMultiSelect || isAriaMultiSelect,
+                            options_count: optionsCount,
                         });
                     });
-                    return out.slice(0, 35);
+                    return out.slice(0, 60);
                 }""")
                 result = {'success': True, 'elements': elements, 'url': page.url}
             
