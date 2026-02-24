@@ -21,6 +21,10 @@ class DockerManager:
         self.client = docker.from_env()
         self._containers: dict[str, Container] = {}
         self._last_activity: dict[str, float] = {}  # project_id -> last activity timestamp
+        self._container_status_cache: dict[str, tuple[float, str]] = {}
+        self._container_reload_ttl_seconds = 1.0
+        self._running_servers_cache: dict[str, tuple[float, dict]] = {}
+        self._running_servers_ttl_seconds = 1.5
         os.makedirs(settings.PROJECTS_DIR, exist_ok=True)
 
     def _container_name(self, project_id: str) -> str:
@@ -34,11 +38,21 @@ class DockerManager:
         if project_id in self._containers:
             try:
                 c = self._containers[project_id]
-                c.reload()
-                if c.status == "running":
+                now = time.time()
+                cached_state = self._container_status_cache.get(project_id)
+                should_reload = (
+                    not cached_state
+                    or (now - cached_state[0]) > self._container_reload_ttl_seconds
+                )
+                if should_reload:
+                    c.reload()
+                    self._container_status_cache[project_id] = (now, c.status)
+                status = self._container_status_cache.get(project_id, (0, "unknown"))[1]
+                if status == "running":
                     return c
             except Exception:
                 del self._containers[project_id]
+                self._container_status_cache.pop(project_id, None)
 
         # Search by name
         try:
@@ -136,6 +150,7 @@ class DockerManager:
             return {}
 
         container.reload()
+        self._container_status_cache[project_id] = (time.time(), container.status)
         ports = container.attrs.get("NetworkSettings", {}).get("Ports", {})
 
         result = {}
@@ -165,18 +180,34 @@ class DockerManager:
 
     async def find_running_servers(self, project_id: str) -> dict:
         """Find running dev servers in the container."""
+        now = time.time()
+        cached = self._running_servers_cache.get(project_id)
+        if cached and (now - cached[0]) < self._running_servers_ttl_seconds:
+            return dict(cached[1])
+
         container = self.get_container(project_id)
         if not container:
             return {}
-        
+
         # Common dev server ports
         common_ports = [3000, 5173, 8080, 5000, 8000, 4000]
-        running_servers = {}
-        
-        for port in common_ports:
-            if await self.check_dev_server(project_id, port):
-                running_servers[str(port)] = self.get_ports(project_id).get(str(port), None)
-        
+        ports = self.get_ports(project_id)
+        running_servers: dict[str, str | None] = {}
+
+        check_ports = " ".join(str(port) for port in common_ports)
+        check_cmd = (
+            "for p in " + check_ports + "; do "
+            "if ss -ltn | awk '{print $4}' | grep -E '(^|:)'\"$p\"'$' >/dev/null; then "
+            "echo $p; fi; done"
+        )
+        result = await self.exec_command(project_id, check_cmd, timeout=5)
+        if result.get("success"):
+            for line in (result.get("stdout") or "").splitlines():
+                port = line.strip()
+                if port:
+                    running_servers[port] = ports.get(port)
+
+        self._running_servers_cache[project_id] = (now, running_servers)
         return running_servers
 
     async def exec_command(
@@ -192,6 +223,7 @@ class DockerManager:
         so we offload it to a thread and enforce a real asyncio timeout.
         """
         self.touch_activity(project_id)
+        self._running_servers_cache.pop(project_id, None)
         container = self.get_container(project_id)
         if not container:
             container = await self.create_sandbox(project_id)
