@@ -33,7 +33,10 @@ from telegram_bot import telegram_bot
 
 PORTS_UPDATE_DEBOUNCE_SECONDS = 1.0
 STREAM_FLUSH_INTERVAL_SECONDS = 0.08
+<<<<<<< codex/plan-performance-and-automated-testing-improvements-hyftof
 HEARTBEAT_PORT_SCAN_INTERVAL_SECONDS = 24.0
+=======
+>>>>>>> main
 
 # ============================================
 # App lifecycle
@@ -666,6 +669,7 @@ async def websocket_chat(websocket: WebSocket, project_id: str):
     _last_ports_update_ts = 0.0
     _pending_ports_update: dict | None = None
     _ports_update_task: asyncio.Task | None = None
+<<<<<<< codex/plan-performance-and-automated-testing-improvements-hyftof
     _last_heartbeat_port_scan_ts = 0.0
 
     def _should_probe_ports_after_command(step_dict: dict) -> bool:
@@ -679,6 +683,8 @@ async def websocket_chat(websocket: WebSocket, project_id: str):
             "flask run", "python -m http.server", "serve", "http-server", "pkill", "killall", "kill ",
         )
         return any(token in normalized for token in tokens)
+=======
+>>>>>>> main
 
     async def _send_ports_update(ports_payload: dict, source: str):
         nonlocal _last_known_ports, _last_ports_update_ts
